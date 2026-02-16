@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "samsung-frame-uploader"
+version = "0.1.0"
+description = "Upload images to a Samsung The Frame TV via the samsungtvws API"
+requires-python = ">=3.9"
+dependencies = [
+    "samsungtvws[async,encrypted,cli]>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "pytest",
+]
+
+[project.scripts]
+frame-upload = "frame_uploader.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
