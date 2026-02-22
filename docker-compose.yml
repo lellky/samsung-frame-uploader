@@ -1,8 +1,17 @@
+# First-time setup on a new host:
+#   1) ./scripts/init-data.sh
+#   2) docker compose run --rm frame-uploader-app frame-upload configure --host <TV_IP>
+#   3) docker compose up -d --build
+
 services:
   frame-uploader-app:
     build:
       context: .
       # Optional: override `samsungtvws` with a specific fork/branch.
+      #
+      # TEMPORARY workaround for upstream issue #130:
+      #   https://github.com/xchwarze/samsung-tv-ws-api/issues/130
+      #
       # args:
       #   SAMSUNGTVWS_PIP_SPEC: git+https://github.com/lellky/samsung-tv-ws-api.git@fix-0-97
     container_name: frame-uploader-app

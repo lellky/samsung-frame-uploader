@@ -16,8 +16,9 @@ COPY src /app/src
 
 # Optional override to install samsungtvws from a specific fork/branch before installing this project.
 # By default, we rely on the `samsungtvws` dependency declared in `pyproject.toml` (PyPI).
-# Example:
+# Example (TEMPORARY workaround for upstream issue #130):
 #   docker build --build-arg SAMSUNGTVWS_PIP_SPEC='git+https://github.com/lellky/samsung-tv-ws-api.git@fix-0-97' .
+# See: https://github.com/xchwarze/samsung-tv-ws-api/issues/130
 ARG SAMSUNGTVWS_PIP_SPEC=
 
 RUN pip install --no-cache-dir --upgrade pip \

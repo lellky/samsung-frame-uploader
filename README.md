@@ -5,26 +5,85 @@ A CLI tool to upload images to a Samsung The Frame TV using the [samsungtvws](ht
 This repo includes:
 - A **thumbnail downloader** (works on older Art API versions like 0.97)
 - An **optional SmartThings fallback upload** path (requires a SmartThings Personal Access Token)
+- A **headless scheduled uploader app** (`frame-uploader-app`) designed to run well in Docker
 
 **Working models**: Most 2020+ Frame TVs (Art API 4.x+) should work out of the box. Some older models (e.g. Art API 0.97) may require a `samsungtvws` build that includes the Art API 0.97 upload fix.
 
-## Install
+## Quickstart (Docker Compose, recommended for a new host)
+
+This is the easiest way to run the **headless scheduled uploader app** (`frame-uploader-app`) on a fresh machine without worrying about the host Python version.
+
+Prereqs: Docker + Docker Compose v2 (you should have the `docker compose` command).
+
+1) Clone + enter the repo
+```bash
+# HTTPS
+git clone https://github.com/lellky/samsung-frame-uploader.git
+cd samsung-frame-uploader
+```
+
+(If you prefer SSH: `git clone git@github.com:lellky/samsung-frame-uploader.git`.)
+
+2) **Required (once): create the bind-mount directories**
+
+Docker Compose bind-mounts `./data/...` into the container. Those directories must exist on the host before you start.
+
+```bash
+./scripts/init-data.sh
+```
+
+(If you get `permission denied`, run: `chmod +x ./scripts/init-data.sh` and try again.)
+
+Optional: copy images into `./data/incoming/` on the host (or edit `docker-compose.yml` to change the bind mounts / `INPUT_DIR`).
+
+3) Configure the TV connection (writes config/token under `./data/config/`)
+```bash
+docker compose run --rm frame-uploader-app frame-upload configure --host 192.168.1.100
+```
+
+The first time you connect, you may need to accept the connection prompt on your TV.
+
+4) Start the app
+```bash
+docker compose up -d --build
+```
+
+5) Verify
+```bash
+# One-off tick (verbose)
+docker compose run --rm frame-uploader-app frame-uploader-app --once -v
+
+# Check logs
+docker compose logs -f frame-uploader-app
+```
+
+## Local install (Python)
+
+If you only want the CLI locally (or you’re developing), you can install the project directly. Requires **Python 3.9+**.
 
 ```bash
 pip install -e ".[dev]"
 ```
 
-## Setup
+## Setup (configure TV)
 
-Set your TV's static IP address, then configure:
+Set your TV's static IP address, then configure.
 
-```bash
-frame-upload configure --host 192.168.1.100
-```
-
-The first time you connect, you may need to accept the connection prompt on your TV.
+- Local install:
+  ```bash
+  frame-upload configure --host 192.168.1.100
+  ```
+- Docker Compose:
+  ```bash
+  docker compose run --rm frame-uploader-app frame-upload configure --host 192.168.1.100
+  ```
 
 ## Usage
+
+Tip: if you’re running via Docker Compose, you can run the CLI inside the container like this:
+```bash
+docker compose run --rm frame-uploader-app frame-upload status
+```
 
 ### Basic Upload
 
@@ -140,7 +199,11 @@ This repo also includes a headless app (`frame-uploader-app`) that:
 - when there are no new images, it cycles through the existing image history and re-uploads in order
 - prunes images on the TV to enforce `KEEP_ON_TV` (see "TV cleanup behavior" below)
 
-By default, the `Dockerfile` installs dependencies from `pyproject.toml` (including `samsungtvws` from PyPI). If you need to override the `samsungtvws` install (for example, to use a specific fork/branch), you can pass a build arg (see `Dockerfile`).
+By default, the `Dockerfile` installs dependencies from `pyproject.toml` (including `samsungtvws` from PyPI).
+
+If you need to override the `samsungtvws` install (for example, to use a specific fork/branch), you can pass a build arg (see `Dockerfile`).
+
+Note: the `lellky` fork mentioned in examples/config is intended as a **temporary workaround** for upstream issue **xchwarze/samsung-tv-ws-api#130** (https://github.com/xchwarze/samsung-tv-ws-api/issues/130). Once that issue is fixed in an upstream release, you should switch back to the normal PyPI dependency.
 
 Configuration is via environment variables (suitable for Docker):
 - `INPUT_DIR`, `OPTIMIZED_DIR`, `DB_PATH`
@@ -173,15 +236,21 @@ Note: cleanup is best-effort and tries to avoid deleting the currently displayed
 
 You can run a single tick for testing:
 ```bash
+# Local install
 frame-uploader-app --once -v
+
+# Docker Compose
+docker compose run --rm frame-uploader-app frame-uploader-app --once -v
 ```
 
-A sample `docker-compose.yml` is included.
+A sample `docker-compose.yml` is included (see **Quickstart** above).
 
-Before you start the container, create the bind-mount directories once:
+**IMPORTANT (new host):** before you start the container, create the bind-mount directories on the host:
 ```bash
 ./scripts/init-data.sh
 ```
+
+This is safe to re-run (it just `mkdir -p`s the required `./data/...` folders).
 
 If you want to use Dropbox as the source of incoming files on a headless machine, see **[`docs/dropbox.md`](docs/dropbox.md)**.
 
