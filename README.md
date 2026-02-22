@@ -168,9 +168,12 @@ Before you start the container, create the bind-mount directories once:
 ./scripts/init-data.sh
 ```
 
+If you want to use Dropbox as the source of incoming files on a headless machine, see **[`docs/dropbox.md`](docs/dropbox.md)**.
+
 ## Documentation
 
 - **[AGENTS.md](AGENTS.md)** - Development and testing guide
+- **[`docs/dropbox.md`](docs/dropbox.md)** - Populate the incoming folder from Dropbox (rclone + systemd)
 
 ## Development
 
