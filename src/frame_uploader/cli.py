@@ -12,9 +12,11 @@ from pathlib import Path
 from frame_uploader.config import DEFAULT_CONFIG_PATH, TVConfig
 from frame_uploader.thumbnails import fetch_thumbnail
 from frame_uploader.uploader import (
+    ArtModeRequiredError,
     check_art_mode,
     connect,
     delete_image,
+    ensure_in_art_mode,
     get_current,
     list_art,
     select_image,
@@ -355,6 +357,7 @@ def main() -> None:
             path: Path = args.path
 
             if path.is_file():
+                ensure_in_art_mode(tv, action="upload images")
                 resp = upload_image_async_sync_wrapper(
                     config.host,
                     config.port,
@@ -376,6 +379,7 @@ def main() -> None:
 
                 responses = []
                 for f in files:
+                    ensure_in_art_mode(tv, action="upload images")
                     logging.info("Async uploading %s ...", f.name)
                     resp = upload_image_async_sync_wrapper(
                         config.host,
@@ -393,6 +397,10 @@ def main() -> None:
                     file=sys.stderr,
                 )
                 sys.exit(1)
+
+    except ArtModeRequiredError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
 
     except ResponseError as e:
         # Avoid a full stack trace for common TV/library issues.

@@ -15,6 +15,106 @@ logger = logging.getLogger(__name__)
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
 
+class ArtModeRequiredError(RuntimeError):
+    """Raised when an operation requires the TV to be *currently* in Art Mode."""
+
+
+def _normalize_on(value) -> bool | None:
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, int):
+        return value != 0
+
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in {"on", "true", "1", "yes", "y", "enabled"}:
+            return True
+        if v in {"off", "false", "0", "no", "n", "disabled"}:
+            return False
+
+    return None
+
+
+def is_in_art_mode(tv: SamsungTVWS) -> bool:
+    """Best-effort check for whether the TV is *currently* in Art Mode.
+
+    Important: If we cannot determine the state reliably, we return False.
+    """
+
+    try:
+        art = tv.art()
+    except Exception:  # noqa: BLE001
+        return False
+
+    try:
+        if not art.supported():
+            return False
+    except Exception:  # noqa: BLE001
+        return False
+
+    # Try known helper methods exposed by some samsungtvws versions/forks.
+    for name in (
+        "get_artmode",
+        "get_art_mode",
+        "get_artmode_status",
+        "get_art_mode_status",
+        "artmode_status",
+        "get_artmode_state",
+        "get_art_mode_state",
+    ):
+        fn = getattr(art, name, None)
+        if fn is None:
+            continue
+
+        try:
+            result = fn()
+        except Exception:  # noqa: BLE001
+            continue
+
+        b = _normalize_on(result)
+        if b is not None:
+            return b
+
+        if isinstance(result, dict):
+            for k in ("value", "status", "mode", "state", "artmode", "artMode", "art_mode"):
+                if k in result:
+                    b = _normalize_on(result[k])
+                    if b is not None:
+                        return b
+
+    # Fallback: some TVs/libraries only expose get_current() when in Art Mode.
+    try:
+        cur = art.get_current()
+    except Exception:  # noqa: BLE001
+        return False
+
+    if isinstance(cur, dict):
+        for k in ("artmode", "artMode", "art_mode", "is_art_mode", "isArtMode"):
+            if k in cur:
+                b = _normalize_on(cur[k])
+                if b is not None:
+                    return b
+
+        cid = cur.get("content_id") or cur.get("contentId") or cur.get("contentID")
+        if isinstance(cid, str) and cid:
+            return True
+
+    return False
+
+
+def ensure_in_art_mode(tv: SamsungTVWS, *, action: str) -> None:
+    if not is_in_art_mode(tv):
+        raise ArtModeRequiredError(
+            f"TV is not currently in Art Mode (or the state could not be determined); "
+            f"refusing to {action}. Switch the TV to Art Mode and try again."
+        )
+
+
+def _is_my_upload_id(content_id: str) -> bool:
+    return content_id.startswith("MY_") or content_id.startswith("MY-")
+
+
 def _file_type(path: Path) -> str:
     ext = path.suffix.lower()
     if ext in {".jpg", ".jpeg"}:
@@ -57,6 +157,8 @@ def upload_image(tv: SamsungTVWS, path: Path, matte: str | None = None) -> str:
     Returns the content_id (best-effort).
     """
 
+    ensure_in_art_mode(tv, action="upload images")
+
     import inspect
 
     from samsungtvws.exceptions import ResponseError
@@ -76,7 +178,7 @@ def upload_image(tv: SamsungTVWS, path: Path, matte: str | None = None) -> str:
     before_ids = {
         img.get("content_id")
         for img in tv.art().available()
-        if img.get("content_id", "").startswith("MY_F")
+        if isinstance(img.get("content_id"), str) and _is_my_upload_id(img["content_id"])
     }
 
     try:
@@ -94,7 +196,7 @@ def upload_image(tv: SamsungTVWS, path: Path, matte: str | None = None) -> str:
         after_ids = {
             img.get("content_id")
             for img in tv.art().available()
-            if img.get("content_id", "").startswith("MY_F")
+            if isinstance(img.get("content_id"), str) and _is_my_upload_id(img["content_id"])
         }
         new_ids = after_ids - before_ids
 
@@ -151,6 +253,7 @@ def upload_directory(
 
 def select_image(tv: SamsungTVWS, content_id: str) -> None:
     """Set a piece of art as the current display."""
+    ensure_in_art_mode(tv, action="select images")
     tv.art().select_image(content_id)
     logger.info("Selected art: %s", content_id)
 

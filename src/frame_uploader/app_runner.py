@@ -26,6 +26,7 @@ from frame_uploader.optimizer import (
     optimize_for_frame,
 )
 from frame_uploader.uploader import (
+    ArtModeRequiredError,
     connect,
     delete_image,
     get_current,
@@ -267,14 +268,22 @@ def upload_one(cfg: AppConfig, db: AppDB) -> str | None:
             logger.info("DRY_RUN: would upload %s", optimized_path)
             return None
 
-        content_id = upload_image(tv, Path(optimized_path), matte=matte)
+        try:
+            content_id = upload_image(tv, Path(optimized_path), matte=matte)
+        except ArtModeRequiredError as e:
+            logger.info("Skipping upload: %s", e)
+            return None
+
         db.mark_uploaded(image_id=image_id, tv_content_id=content_id)
         db.set_state("cycle_last_image_id", str(image_id))
         logger.info("Uploaded %s -> %s", optimized_path, content_id)
 
         if cfg.select_after_upload:
-            select_image(tv, content_id)
-            logger.info("Selected %s", content_id)
+            try:
+                select_image(tv, content_id)
+                logger.info("Selected %s", content_id)
+            except ArtModeRequiredError as e:
+                logger.info("Skipping select: %s", e)
 
         return content_id
 

@@ -36,41 +36,49 @@ async def upload_image_async(
             "Make sure you have Nick Waterton's fork installed: "
             "pip install git+https://github.com/NickWaterton/samsung-tv-ws-api.git"
         )
-    
+
     data = path.read_bytes()
     ft = _file_type(path)
-    
+
     logger.info(f"Async uploading {path.name}...")
-    
+
     # Create async art interface
     art = SamsungTVAsyncArt(
         host=host,
         port=port,
         token_file=token_file,
     )
-    
+
     try:
         # Start listening (establishes connection)
         await art.start_listening()
-        
+
         # Check if supported
         supported = await art.supported()
         if not supported:
             raise RuntimeError("TV does not support art mode")
-        
+
         logger.debug("Art mode supported")
-        
+
         # Get current art list (before upload)
         before = await art.available()
-        before_ids = {img.get('content_id') for img in before if img.get('content_id', '').startswith('MY_F')}
+        before_ids = {
+            img.get("content_id")
+            for img in before
+            if isinstance(img.get("content_id"), str)
+            and (
+                img["content_id"].startswith("MY_")
+                or img["content_id"].startswith("MY-")
+            )
+        }
         logger.debug(f"Before IDs: {len(before_ids)} images")
-        
+
         # Upload
         kwargs = {"file_type": ft}
         if matte:
             kwargs["matte"] = matte
             kwargs["portrait_matte"] = matte
-        
+
         try:
             content_id = await art.upload(data, **kwargs)
             logger.info(f"Upload successful: {content_id}")
@@ -80,22 +88,34 @@ async def upload_image_async(
             if 'error number -1' in str(e) or '-1' in str(e):
                 logger.warning(f"Got error but checking if upload succeeded: {e}")
                 await asyncio.sleep(8)
-                
+
                 after = await art.available()
-                after_ids = {img.get('content_id') for img in after if img.get('content_id', '').startswith('MY_F')}
+                after_ids = {
+                    img.get("content_id")
+                    for img in after
+                    if isinstance(img.get("content_id"), str)
+                    and (
+                        img["content_id"].startswith("MY_")
+                        or img["content_id"].startswith("MY-")
+                    )
+                }
                 new_ids = after_ids - before_ids
-                
+
                 if new_ids:
                     new_id = list(new_ids)[0]
                     logger.info(f"Upload succeeded despite error! New image: {new_id}")
                     return new_id
                 else:
                     logger.error("Upload truly failed - no new image found")
-                    logger.error(f"Before: {len(before_ids)} images, After: {len(after_ids)} images")
+                    logger.error(
+                        "Before: %s images, After: %s images",
+                        len(before_ids),
+                        len(after_ids),
+                    )
                     raise
             else:
                 raise
-                
+
     finally:
         await art.close()
 
