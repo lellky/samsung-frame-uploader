@@ -1,0 +1,48 @@
+services:
+  frame-uploader-app:
+    build:
+      context: .
+      # Optional: override `samsungtvws` with a specific fork/branch.
+      # args:
+      #   SAMSUNGTVWS_PIP_SPEC: git+https://github.com/lellky/samsung-tv-ws-api.git@fix-0-97
+    container_name: frame-uploader-app
+    restart: unless-stopped
+    environment:
+      # Persist TV config/token inside the mounted /config volume.
+      HOME: /config
+
+      # App config
+      INPUT_DIR: /data/incoming
+      OPTIMIZED_DIR: /data/optimized
+      DB_PATH: /data/db/frame_uploader.sqlite3
+      INTERVAL_SECONDS: "30"
+      UPLOAD_INTERVAL_SECONDS: "30"
+      KEEP_ON_TV: "20"
+      JPEG_QUALITY: "85"
+
+      # Cleanup:
+      # - all_my: keep only the newest KEEP_ON_TV user uploads (MY_* / MY-*)
+      # - app_only: delete only items uploaded by this app
+      CLEANUP_MODE: all_my
+
+      SELECT_AFTER_UPLOAD: "true"
+
+      # Image resize:
+      # - pad: preserve aspect ratio + add borders (recommended)
+      # - crop: cover + center-crop
+      RESIZE_MODE: pad
+      BACKGROUND_COLOR: black
+
+      # Optional overrides
+      MATTE: none
+      # MATTE: modern_warm
+
+      # Cycle order
+      # ORDER_MODE: created_at     # created_at | filename | exif_date | random
+      # ORDER_SEED: "my-seed"      # only used when ORDER_MODE=random
+
+    volumes:
+      - ./data/incoming:/data/incoming
+      - ./data/optimized:/data/optimized
+      - ./data/db:/data/db
+      - ./data/config:/config

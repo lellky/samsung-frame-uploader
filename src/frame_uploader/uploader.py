@@ -8,7 +8,7 @@ from pathlib import Path
 
 from samsungtvws import SamsungTVWS
 
-from frame_uploader.config import TVConfig
+from frame_uploader.config import DEFAULT_CONFIG_PATH, TVConfig
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +47,83 @@ def get_current(tv: SamsungTVWS) -> dict:
 
 
 def upload_image(tv: SamsungTVWS, path: Path, matte: str | None = None) -> str:
-    """Upload a single image to the TV. Returns the upload response."""
+    """Upload a single image to the TV.
+
+    For some older Frame TVs and/or samsungtvws builds, the WS/D2D upload path can
+    fail with a generic error code (-1). In that case we:
+    1) check whether the upload actually succeeded anyway
+    2) if it did not, optionally fall back to SmartThings upload if configured
+
+    Returns the content_id (best-effort).
+    """
+
+    import inspect
+
+    from samsungtvws.exceptions import ResponseError
+
     data = path.read_bytes()
     ft = _file_type(path)
+
     kwargs: dict = {"file_type": ft}
     if matte:
         kwargs["matte"] = matte
-        kwargs["portrait_matte"] = matte
-    response = tv.art().upload(data, **kwargs)
-    logger.info("Uploaded %s: %s", path.name, response)
-    return response
+        # portrait_matte is only supported in newer library versions (3.x+)
+        upload_sig = inspect.signature(tv.art().upload)
+        if "portrait_matte" in upload_sig.parameters:
+            kwargs["portrait_matte"] = matte
+
+    # Get list of existing images before upload
+    before_ids = {
+        img.get("content_id")
+        for img in tv.art().available()
+        if img.get("content_id", "").startswith("MY_F")
+    }
+
+    try:
+        response = tv.art().upload(data, **kwargs)
+        logger.info("Uploaded %s: %s", path.name, response)
+        return response
+    except ResponseError as e:
+        # Workaround for Frame TVs that return error -1 even on successful upload
+        if "error number -1" not in str(e):
+            raise
+
+        logger.warning("Got error -1, checking if upload actually succeeded...")
+        time.sleep(8)  # Give TV more time to process
+
+        after_ids = {
+            img.get("content_id")
+            for img in tv.art().available()
+            if img.get("content_id", "").startswith("MY_F")
+        }
+        new_ids = after_ids - before_ids
+
+        if new_ids:
+            new_id = list(new_ids)[0]
+            logger.info("Upload succeeded despite error -1! New image: %s", new_id)
+            return new_id
+
+        logger.error("Upload failed (error -1) and no new image appeared on the TV.")
+
+        # Optional SmartThings fallback.
+        try:
+            from frame_uploader.uploader_smartthings import (
+                load_smartthings_config,
+                upload_via_smartthings,
+            )
+
+            config_dir = DEFAULT_CONFIG_PATH.parent
+            token, device_id = load_smartthings_config(config_dir)
+            logger.warning(
+                "Falling back to SmartThings upload (configured at %s)", config_dir
+            )
+            return upload_via_smartthings(token, device_id, path, matte=matte)
+        except FileNotFoundError:
+            # Not configured; re-raise original upload error.
+            raise e
+        except Exception as st_err:
+            logger.error("SmartThings fallback upload failed: %s", st_err)
+            raise e from st_err
 
 
 def upload_directory(

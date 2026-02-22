@@ -8,6 +8,7 @@ from pathlib import Path
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "frame-uploader" / "config.json"
 DEFAULT_TOKEN_PATH = Path.home() / ".config" / "frame-uploader" / "tv-token.txt"
+DEFAULT_SMARTTHINGS_PATH = Path.home() / ".config" / "frame-uploader" / "smartthings.json"
 
 MATTE_TYPES = [
     "none",

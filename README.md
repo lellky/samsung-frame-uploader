@@ -2,6 +2,12 @@
 
 A CLI tool to upload images to a Samsung The Frame TV using the [samsungtvws](https://github.com/xchwarze/samsung-tv-ws-api) library.
 
+This repo includes:
+- A **thumbnail downloader** (works on older Art API versions like 0.97)
+- An **optional SmartThings fallback upload** path (requires a SmartThings Personal Access Token)
+
+**Working models**: Most 2020+ Frame TVs (Art API 4.x+) should work out of the box. Some older models (e.g. Art API 0.97) may require a `samsungtvws` build that includes the Art API 0.97 upload fix.
+
 ## Install
 
 ```bash
@@ -20,6 +26,8 @@ The first time you connect, you may need to accept the connection prompt on your
 
 ## Usage
 
+### Basic Upload
+
 ```bash
 # Upload a single image
 frame-upload upload photo.jpg
@@ -30,11 +38,37 @@ frame-upload upload ./images/
 # Upload with a specific matte style
 frame-upload upload photo.jpg --matte flexible_apricot
 
+# Upload with retry logic (for transient errors)
+frame-upload upload photo.jpg --retry 3
+```
+
+### Alternative Upload Methods
+
+If standard upload fails, try alternative methods:
+
+```bash
+# Try all available methods (chunked + HTTP fallback)
+frame-upload upload-alt photo.jpg --method both
+
+# Async upload (may work on some TVs)
+frame-upload upload-async photo.jpg
+```
+
+### Other Commands
+
+```bash
 # List all art on the TV
 frame-upload list
 
 # Show currently displayed art
 frame-upload current
+
+# Download a thumbnail JPEG (defaults to current artwork)
+frame-upload thumbnail
+frame-upload thumbnail MY-F0123 --out /tmp/thumb.jpg
+
+# Print the TV Art API version (e.g. 0.97, 4.0, ...)
+frame-upload api-version
 
 # Set a specific piece of art as the display
 frame-upload select MY-F0001
@@ -57,3 +91,87 @@ Matte format is `{type}_{color}`, for example `modern_apricot` or `flexible_warm
 ## Configuration
 
 Config is stored at `~/.config/frame-uploader/config.json`. Auth token is persisted at `~/.config/frame-uploader/tv-token.txt`.
+
+### SmartThings fallback (optional)
+
+If your TV rejects uploads with `error number -1`, you can configure an *experimental* SmartThings fallback upload.
+
+```bash
+frame-upload configure-smartthings --token <SMARTTHINGS_PAT> --device-id <DEVICE_ID>
+```
+
+This writes `~/.config/frame-uploader/smartthings.json`.
+
+### Port Configuration
+
+- **Port 8001**: Older TVs (pre-2016) and some 2016-2018 models
+- **Port 8002**: Newer TVs (2019+) with secure WebSocket (default)
+
+```bash
+frame-upload configure --host 192.168.1.100 --port 8001  # For older TVs
+```
+
+## Troubleshooting
+
+If uploads fail:
+
+1. Check your TV's Art API version:
+   ```bash
+   frame-upload api-version
+   ```
+
+2. Try different upload methods (see "Alternative Upload Methods" above)
+
+3. Check if other commands work (list, current, status)
+
+4. If you're on an older model (e.g. Art API 0.97) and uploads fail, ensure you're using a `samsungtvws` version that includes the Art API 0.97 upload fix.
+
+### Known Issues / Compatibility Notes
+
+- **Older Frame TVs (Art API 0.97)**: Thumbnails generally work. Upload support depends on having the Art API 0.97 upload fix in your installed `samsungtvws`.
+- **2020+ Frame TVs (Art API 4.x+)**: Should work with standard upload methods
+
+## Scheduled uploader app (folder watch + optimize + upload)
+
+This repo also includes a headless app (`frame-uploader-app`) that:
+- scans an input folder for images
+- optimizes them for The Frame (3840x2160 JPEG)
+- uploads *and selects* one image per interval (throttled by `UPLOAD_INTERVAL_SECONDS`)
+- when there are no new images, it cycles through the existing image history and re-uploads in order
+- deletes older uploads to keep around 20 images on the TV
+
+By default, the `Dockerfile` installs dependencies from `pyproject.toml` (including `samsungtvws` from PyPI). If you need to override the `samsungtvws` install (for example, to use a specific fork/branch), you can pass a build arg (see `Dockerfile`).
+
+Configuration is via environment variables (suitable for Docker):
+- `INPUT_DIR`, `OPTIMIZED_DIR`, `DB_PATH`
+- `INTERVAL_SECONDS` (default 300)
+- `UPLOAD_INTERVAL_SECONDS` (default 300)
+- `KEEP_ON_TV` (default 20)
+- `JPEG_QUALITY` (default 85)
+- `CLEANUP_MODE` (`all_my` default, or `app_only`)
+- `SELECT_AFTER_UPLOAD` (default true)
+- `RESIZE_MODE` (`pad` default, or `crop`)
+- `BACKGROUND_COLOR` (default `black`)
+- `MATTE` (default `none` for full-bleed, or set e.g. `modern_warm`)
+- `ORDER_MODE` (`created_at` default, or `filename`, `exif_date`, `random`)
+- `ORDER_SEED` (optional, used when `ORDER_MODE=random`)
+
+You can run a single tick for testing:
+```bash
+frame-uploader-app --once -v
+```
+
+A sample `docker-compose.yml` is included.
+
+Before you start the container, create the bind-mount directories once:
+```bash
+./scripts/init-data.sh
+```
+
+## Documentation
+
+- **[AGENTS.md](AGENTS.md)** - Development and testing guide
+
+## Development
+
+See [AGENTS.md](AGENTS.md) for architecture details and development commands.

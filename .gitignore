@@ -10,3 +10,11 @@ venv/
 .env
 *.token
 tv-token.txt
+
+# app runtime artifacts
+*.sqlite3
+*.sqlite
+*.db
+
+data/
+.DS_Store

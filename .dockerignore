@@ -1,0 +1,12 @@
+.git
+__pycache__
+*.py[cod]
+*.egg-info
+dist
+build
+.venv
+venv
+.env
+data
+*.pcap
+*.sqlite3

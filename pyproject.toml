@@ -9,6 +9,8 @@ description = "Upload images to a Samsung The Frame TV via the samsungtvws API"
 requires-python = ">=3.9"
 dependencies = [
     "samsungtvws[async,encrypted,cli]>=3.0.0",
+    "requests>=2.31.0",
+    "pillow>=10.0.0",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +21,7 @@ dev = [
 
 [project.scripts]
 frame-upload = "frame_uploader.cli:main"
+frame-uploader-app = "frame_uploader.app_runner:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
