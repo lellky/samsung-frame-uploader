@@ -21,9 +21,9 @@ services:
       JPEG_QUALITY: "85"
 
       # Cleanup:
+      # - app_only (default): delete only items uploaded by this app
       # - all_my: keep only the newest KEEP_ON_TV user uploads (MY_* / MY-*)
-      # - app_only: delete only items uploaded by this app
-      CLEANUP_MODE: all_my
+      CLEANUP_MODE: app_only
 
       SELECT_AFTER_UPLOAD: "true"
 

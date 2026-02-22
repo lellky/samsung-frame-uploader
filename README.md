@@ -138,7 +138,7 @@ This repo also includes a headless app (`frame-uploader-app`) that:
 - optimizes them for The Frame (3840x2160 JPEG)
 - uploads *and selects* one image per interval (throttled by `UPLOAD_INTERVAL_SECONDS`)
 - when there are no new images, it cycles through the existing image history and re-uploads in order
-- deletes older uploads to keep around 20 images on the TV
+- prunes images on the TV to enforce `KEEP_ON_TV` (see "TV cleanup behavior" below)
 
 By default, the `Dockerfile` installs dependencies from `pyproject.toml` (including `samsungtvws` from PyPI). If you need to override the `samsungtvws` install (for example, to use a specific fork/branch), you can pass a build arg (see `Dockerfile`).
 
@@ -148,13 +148,28 @@ Configuration is via environment variables (suitable for Docker):
 - `UPLOAD_INTERVAL_SECONDS` (default 300)
 - `KEEP_ON_TV` (default 20)
 - `JPEG_QUALITY` (default 85)
-- `CLEANUP_MODE` (`all_my` default, or `app_only`)
+- `CLEANUP_MODE` (`app_only` default, or `all_my`)
 - `SELECT_AFTER_UPLOAD` (default true)
 - `RESIZE_MODE` (`pad` default, or `crop`)
 - `BACKGROUND_COLOR` (default `black`)
 - `MATTE` (default `none` for full-bleed, or set e.g. `modern_warm`)
 - `ORDER_MODE` (`created_at` default, or `filename`, `exif_date`, `random`)
 - `ORDER_SEED` (optional, used when `ORDER_MODE=random`)
+
+### TV cleanup behavior
+
+- `frame-upload` (the CLI) never deletes anything unless you run `frame-upload delete ...`.
+- `frame-uploader-app` prunes on every tick after uploading.
+
+`KEEP_ON_TV`:
+- Maximum number of candidate images to keep on the TV.
+- Set to a negative value (e.g. `-1`) to disable cleanup entirely.
+
+`CLEANUP_MODE`:
+- `app_only` (default): deletes only content IDs previously uploaded by `frame-uploader-app` (tracked in its SQLite DB), leaving pre-existing uploads untouched.
+- `all_my`: treats *any* user-uploaded artwork on the TV as eligible for cleanup (content IDs starting with `MY_` or `MY-`), even if it existed before the app started.
+
+Note: cleanup is best-effort and tries to avoid deleting the currently displayed artwork.
 
 You can run a single tick for testing:
 ```bash

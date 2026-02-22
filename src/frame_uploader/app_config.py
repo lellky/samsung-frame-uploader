@@ -91,9 +91,10 @@ class AppConfig:
         select_after_upload = _env_bool("SELECT_AFTER_UPLOAD", True)
 
         # cleanup_mode:
-        # - app_only: delete only content_ids that were uploaded by this app (tracked in SQLite)
+        # - app_only (default): delete only content_ids that were uploaded by this app
+        #   (tracked in SQLite)
         # - all_my: delete any user-uploaded art on the TV (MY_* / MY-*)
-        cleanup_mode = os.getenv("CLEANUP_MODE", "all_my").strip().lower()
+        cleanup_mode = os.getenv("CLEANUP_MODE", "app_only").strip().lower()
 
         recursive_scan = _env_bool("RECURSIVE_SCAN", True)
 
