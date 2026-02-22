@@ -38,7 +38,7 @@ Optional: copy images into `./data/incoming/` on the host (or edit `docker-compo
 
 3) Configure the TV connection (writes config/token under `./data/config/`)
 ```bash
-docker compose run --rm frame-uploader-app frame-upload configure --host 192.168.1.100
+docker compose run --rm frame-uploader-app frame-upload configure --host <TV_IP>
 ```
 
 The first time you connect, you may need to accept the connection prompt on your TV.
@@ -71,11 +71,11 @@ Set your TV's static IP address, then configure.
 
 - Local install:
   ```bash
-  frame-upload configure --host 192.168.1.100
+  frame-upload configure --host <TV_IP>
   ```
 - Docker Compose:
   ```bash
-  docker compose run --rm frame-uploader-app frame-upload configure --host 192.168.1.100
+  docker compose run --rm frame-uploader-app frame-upload configure --host <TV_IP>
   ```
 
 ## Usage
@@ -167,7 +167,7 @@ This writes `~/.config/frame-uploader/smartthings.json`.
 - **Port 8002**: Newer TVs (2019+) with secure WebSocket (default)
 
 ```bash
-frame-upload configure --host 192.168.1.100 --port 8001  # For older TVs
+frame-upload configure --host <TV_IP> --port 8001  # For older TVs
 ```
 
 ## Troubleshooting
@@ -198,6 +198,25 @@ This repo also includes a headless app (`frame-uploader-app`) that:
 - uploads *and selects* one image per interval (throttled by `UPLOAD_INTERVAL_SECONDS`)
 - when there are no new images, it cycles through the existing image history and re-uploads in order
 - prunes images on the TV to enforce `KEEP_ON_TV` (see "TV cleanup behavior" below)
+
+### Startup and upload timing (important)
+
+`frame-uploader-app` runs a "tick" immediately on startup (there is no initial sleep).
+
+However, the first tick may still **not upload** right away due to throttling and/or optimization:
+
+- **Upload throttling across restarts**: `UPLOAD_INTERVAL_SECONDS` (default 300) is enforced based on the
+  most recent successful upload time recorded in the app's SQLite DB (the `uploads` table). If you restart
+  the app shortly after a previous upload, the first tick will log and skip uploading until enough time has
+  elapsed.
+
+  Note: the "Upload throttled by UPLOAD_INTERVAL_SECONDS" message is logged at **DEBUG** level, so you
+  generally need `frame-uploader-app -v` (or `--once -v`) to see it.
+
+- **Optimization happens before uploading**: each tick scans and optimizes images before calling upload.
+  If you have many new/large images, the tick can take a while before the first upload/select occurs.
+
+If you want the app to attempt an upload on every tick, set `UPLOAD_INTERVAL_SECONDS=0`.
 
 By default, the `Dockerfile` installs dependencies from `pyproject.toml` (including `samsungtvws` from PyPI).
 
