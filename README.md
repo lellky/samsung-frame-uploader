@@ -216,6 +216,12 @@ However, the first tick may still **not upload** right away due to throttling an
 - **Optimization happens before uploading**: each tick scans and optimizes images before calling upload.
   If you have many new/large images, the tick can take a while before the first upload/select occurs.
 
+- **TV asleep / energy saving mode**: if the TV is offline/unreachable on the network (common when it
+  enters deep sleep / energy saving), the app will **skip upload and TV cleanup** for that tick (instead of
+  crashing) and will try again on the next tick. You’ll typically see log lines like:
+  - `Skipping upload: TV not reachable (HOST:PORT)`
+  - `Skipping cleanup: TV not reachable (HOST:PORT)`
+
 If you want the app to attempt an upload on every tick, set `UPLOAD_INTERVAL_SECONDS=0`.
 
 By default, the `Dockerfile` installs dependencies from `pyproject.toml` (including `samsungtvws` from PyPI).

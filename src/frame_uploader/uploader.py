@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import socket
 import time
 from pathlib import Path
 
@@ -122,6 +123,25 @@ def _file_type(path: Path) -> str:
     if ext == ".png":
         return "PNG"
     raise ValueError(f"Unsupported file type: {ext}")
+
+
+def is_tv_reachable(cfg: TVConfig, *, timeout: float = 1.0) -> bool:
+    """Best-effort connectivity check.
+
+    We only verify that a TCP connection can be established to the configured host/port.
+    This avoids a full websocket handshake (and token exchange), but still catches the
+    common "TV is asleep / offline" case.
+    """
+
+    if not cfg.host:
+        return False
+
+    try:
+        with socket.create_connection((cfg.host, int(cfg.port)), timeout=timeout):
+            return True
+    except OSError as e:
+        logger.debug("TV not reachable at %s:%s: %s", cfg.host, cfg.port, e)
+        return False
 
 
 def connect(cfg: TVConfig) -> SamsungTVWS:

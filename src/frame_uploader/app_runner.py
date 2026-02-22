@@ -30,6 +30,7 @@ from frame_uploader.uploader import (
     connect,
     delete_image,
     get_current,
+    is_tv_reachable,
     list_art,
     select_image,
     upload_image,
@@ -259,6 +260,10 @@ def upload_one(cfg: AppConfig, db: AppDB) -> str | None:
     image_id, optimized_path = nxt
 
     tv_cfg = TVConfig.load()
+    if not is_tv_reachable(tv_cfg):
+        logger.info("Skipping upload: TV not reachable (%s:%s)", tv_cfg.host, tv_cfg.port)
+        return None
+
     tv = connect(tv_cfg)
 
     matte = cfg.matte or tv_cfg.matte
@@ -287,6 +292,11 @@ def upload_one(cfg: AppConfig, db: AppDB) -> str | None:
 
         return content_id
 
+    except OSError as e:
+        logger.info(
+            "Skipping upload: TV not reachable (%s:%s): %s", tv_cfg.host, tv_cfg.port, e
+        )
+        return None
     except Exception as e:  # noqa: BLE001
         logger.exception("Upload failed for %s", optimized_path)
         db.mark_upload_failed(image_id=image_id, error=str(e))
@@ -300,9 +310,22 @@ def cleanup_tv(cfg: AppConfig, db: AppDB) -> int:
         return 0
 
     tv_cfg = TVConfig.load()
+    if not is_tv_reachable(tv_cfg):
+        logger.info("Skipping cleanup: TV not reachable (%s:%s)", tv_cfg.host, tv_cfg.port)
+        return 0
+
     tv = connect(tv_cfg)
 
-    tv_art = list_art(tv)
+    try:
+        tv_art = list_art(tv)
+    except OSError as e:
+        logger.info(
+            "Skipping cleanup: TV not reachable (%s:%s): %s", tv_cfg.host, tv_cfg.port, e
+        )
+        return 0
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Skipping cleanup: failed to list TV art: %s", e)
+        return 0
     tv_items = [a for a in tv_art if isinstance(a, dict) and a.get("content_id")]
 
     # Best-effort: avoid deleting currently displayed artwork.
