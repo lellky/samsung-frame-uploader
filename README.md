@@ -254,10 +254,12 @@ Configuration is via environment variables (suitable for Docker):
 - Set to a negative value (e.g. `-1`) to disable cleanup entirely.
 
 `CLEANUP_MODE`:
-- `app_only` (default): deletes only content IDs previously uploaded by `frame-uploader-app` (tracked in its SQLite DB), leaving pre-existing uploads untouched.
+- `app_only` (default): deletes only content IDs previously uploaded by `frame-uploader-app` (tracked in its SQLite DB), leaving pre-existing uploads untouched. Before pruning, the app reconciles its history against the TV's current artwork list: uploads no longer present are marked as removed locally, without sending another delete command. Only remaining uploads count toward `KEEP_ON_TV`.
 - `all_my`: treats *any* user-uploaded artwork on the TV as eligible for cleanup (content IDs starting with `MY_` or `MY-`), even if it existed before the app started.
 
 Note: cleanup is best-effort and tries to avoid deleting the currently displayed artwork.
+If the artwork list cannot be fetched or is malformed, cleanup leaves the history unchanged.
+`DRY_RUN=true` logs planned cleanup and reconciliation without changing the TV or upload history.
 
 You can run a single tick for testing:
 ```bash

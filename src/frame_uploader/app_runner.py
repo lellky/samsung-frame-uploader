@@ -293,9 +293,7 @@ def upload_one(cfg: AppConfig, db: AppDB) -> str | None:
         return content_id
 
     except OSError as e:
-        logger.info(
-            "Skipping upload: TV not reachable (%s:%s): %s", tv_cfg.host, tv_cfg.port, e
-        )
+        logger.info("Skipping upload: TV not reachable (%s:%s): %s", tv_cfg.host, tv_cfg.port, e)
         return None
     except Exception as e:  # noqa: BLE001
         logger.exception("Upload failed for %s", optimized_path)
@@ -319,14 +317,22 @@ def cleanup_tv(cfg: AppConfig, db: AppDB) -> int:
     try:
         tv_art = list_art(tv)
     except OSError as e:
-        logger.info(
-            "Skipping cleanup: TV not reachable (%s:%s): %s", tv_cfg.host, tv_cfg.port, e
-        )
+        logger.info("Skipping cleanup: TV not reachable (%s:%s): %s", tv_cfg.host, tv_cfg.port, e)
         return 0
     except Exception as e:  # noqa: BLE001
         logger.warning("Skipping cleanup: failed to list TV art: %s", e)
         return 0
-    tv_items = [a for a in tv_art if isinstance(a, dict) and a.get("content_id")]
+    # Reconciliation needs a complete, valid inventory; a malformed response must
+    # not be mistaken for evidence that tracked uploads have disappeared.
+    if not isinstance(tv_art, list) or any(
+        not isinstance(item, dict)
+        or not isinstance(item.get("content_id"), str)
+        or not item["content_id"]
+        for item in tv_art
+    ):
+        logger.warning("Skipping cleanup: invalid TV art list")
+        return 0
+    tv_items = tv_art
 
     # Best-effort: avoid deleting currently displayed artwork.
     try:
@@ -379,8 +385,20 @@ def cleanup_tv(cfg: AppConfig, db: AppDB) -> int:
 
         return deleted
 
-    # app_only: delete based on our upload history.
-    uploads = list(db.iter_uploads_not_deleted())
+    # app_only: reconcile our history before counting retention candidates. Images
+    # removed outside this app must not be retried on every tick or inflate the count.
+    tv_ids = {item["content_id"] for item in tv_items}
+    uploads = []
+    for upload in db.iter_uploads_not_deleted():
+        cid = upload.tv_content_id
+        if cid in tv_ids or cid == current_id:
+            uploads.append(upload)
+        elif cfg.dry_run:
+            logger.info("DRY_RUN: would mark upload absent from TV: %s", cid)
+        else:
+            db.mark_upload_tv_deleted(tv_content_id=cid)
+            logger.info("Marked upload absent from TV: %s", cid)
+
     to_delete = max(0, len(uploads) - cfg.keep_on_tv)
 
     for u in uploads[:to_delete]:
@@ -391,7 +409,6 @@ def cleanup_tv(cfg: AppConfig, db: AppDB) -> int:
 
         if cfg.dry_run:
             logger.info("DRY_RUN: would delete %s", cid)
-            db.mark_upload_tv_deleted(tv_content_id=cid)
             deleted += 1
             continue
 
