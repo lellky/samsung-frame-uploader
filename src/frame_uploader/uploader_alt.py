@@ -9,6 +9,7 @@ from pathlib import Path
 from samsungtvws import SamsungTVWS
 from samsungtvws.exceptions import ResponseError
 
+from frame_uploader.tv_tls import TVCertificateError
 from frame_uploader.uploader import ensure_in_art_mode
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,8 @@ def upload_image_chunked(
             logger.info("Upload successful: %s", response)
             return response
 
+        except TVCertificateError:
+            raise
         except ResponseError as e:
             error_msg = str(e)
             logger.warning(f"Upload attempt {attempt + 1} error: {error_msg}")
@@ -126,6 +129,9 @@ def upload_image_http_fallback(
     This is not guaranteed to work on all models.
     """
     import requests
+
+    if getattr(tv, "tls_fingerprint", None) is not None:
+        raise TVCertificateError("HTTP upload fallback is refused in certificate-pinned mode")
 
     ensure_in_art_mode(tv, action="upload images")
 

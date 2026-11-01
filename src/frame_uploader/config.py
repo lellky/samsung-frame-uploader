@@ -49,6 +49,7 @@ class TVConfig:
     port: int = 8002
     token_file: str = str(DEFAULT_TOKEN_PATH)
     matte: str = "modern_warm"
+    tls_fingerprint: str | None = None
 
     @classmethod
     def load(cls, path: Path = DEFAULT_CONFIG_PATH) -> TVConfig:

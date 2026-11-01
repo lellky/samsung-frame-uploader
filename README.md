@@ -244,6 +244,48 @@ Configuration is via environment variables (suitable for Docker):
 - `ORDER_MODE` (`created_at` default, or `filename`, `exif_date`, `random`)
 - `ORDER_SEED` (optional, used when `ORDER_MODE=random`)
 
+### TV certificate verification
+
+Some TV SDK certificates name only a loopback address, so normal CA/hostname
+verification cannot authenticate the TV at its LAN address. The app supports
+explicit SHA-256 certificate pinning for this case, including validity-date checks.
+Obtain the expected fingerprint through a trusted inspection of your TV before
+enabling it. The app never automatically trusts the certificate it encounters.
+
+For Docker Compose, build the new image, verify and save the expected fingerprint
+in the existing config volume, and then start the updated service:
+
+```sh
+docker compose build frame-uploader-app
+docker compose run --rm frame-uploader-app frame-upload trust-tv --fingerprint '<EXPECTED_SHA256>'
+docker compose up -d frame-uploader-app
+```
+
+Replace the placeholder with the 64 hexadecimal digits from the trusted
+certificate inspection; colon-separated fingerprints are accepted too. The command
+connects using TLS and saves the pin only after it matches and the certificate is
+within its validity period. It sends no TV authentication token and prints no pin.
+The saved `tls_fingerprint` is used by both the CLI and the scheduled app.
+
+Once configured, HTTPS, WebSocket, and secured D2D image transfers verify the same
+certificate before sending application data. A changed, expired, or not-yet-valid
+certificate fails the connection; it never falls back to an unverified transport.
+HTTPS warnings disappear because the peer certificate is authenticated, without
+installing warning filters. A certificate replacement requires a new trusted
+inspection and an explicit `trust-tv` command.
+
+In this mode, plaintext D2D transfers, the experimental HTTP upload fallback,
+`upload-async`, and REST keyboard input are refused because those paths do not
+support the verified transport. Normal `upload` supports the Art API 0.97 binary
+WebSocket upload path. The modern thumbnail path uses the same verified transport.
+Existing configs without a pin retain the library's previous unverified behavior
+and its HTTPS warnings until `trust-tv` is run.
+
+Pinning authenticates possession of the selected certificate's private key. If
+multiple TVs share a vendor certificate and private key, the pin cannot
+distinguish those TVs. Keep actual fingerprints, addresses, and tokens in local
+runtime configuration rather than repository files or PR descriptions.
+
 ### TV cleanup behavior
 
 - `frame-upload` (the CLI) never deletes anything unless you run `frame-upload delete ...`.

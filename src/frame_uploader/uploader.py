@@ -10,6 +10,7 @@ from pathlib import Path
 from samsungtvws import SamsungTVWS
 
 from frame_uploader.config import DEFAULT_CONFIG_PATH, TVConfig
+from frame_uploader.tv_tls import TVCertificateError
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +46,16 @@ def is_in_art_mode(tv: SamsungTVWS) -> bool:
 
     try:
         art = tv.art()
+    except TVCertificateError:
+        raise
     except Exception:  # noqa: BLE001
         return False
 
     try:
         if not art.supported():
             return False
+    except TVCertificateError:
+        raise
     except Exception:  # noqa: BLE001
         return False
 
@@ -70,6 +75,8 @@ def is_in_art_mode(tv: SamsungTVWS) -> bool:
 
         try:
             result = fn()
+        except TVCertificateError:
+            raise
         except Exception:  # noqa: BLE001
             continue
 
@@ -87,6 +94,8 @@ def is_in_art_mode(tv: SamsungTVWS) -> bool:
     # Fallback: some TVs/libraries only expose get_current() when in Art Mode.
     try:
         cur = art.get_current()
+    except TVCertificateError:
+        raise
     except Exception:  # noqa: BLE001
         return False
 
@@ -148,6 +157,16 @@ def connect(cfg: TVConfig) -> SamsungTVWS:
     """Create a connected SamsungTVWS instance."""
     token_path = Path(cfg.token_file)
     token_path.parent.mkdir(parents=True, exist_ok=True)
+    if cfg.tls_fingerprint is not None:
+        from frame_uploader.tv_tls import PinnedTV
+
+        return PinnedTV(
+            host=cfg.host,
+            port=cfg.port,
+            token_file=str(token_path),
+            timeout=10,
+            tls_fingerprint=cfg.tls_fingerprint,
+        )
     return SamsungTVWS(host=cfg.host, port=cfg.port, token_file=str(token_path))
 
 

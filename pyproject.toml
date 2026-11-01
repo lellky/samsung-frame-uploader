@@ -8,9 +8,11 @@ version = "0.1.0"
 description = "Upload images to a Samsung The Frame TV via the samsungtvws API"
 requires-python = ">=3.9"
 dependencies = [
-    "samsungtvws[async,encrypted,cli]>=3.0.0",
+    "samsungtvws[async,encrypted,cli]>=3.0.6,<4",
     "requests>=2.31.0",
     "pillow>=10.0.0",
+    "cryptography>=42.0.0",
+    "urllib3>=2.0.0,<3",
 ]
 
 [project.optional-dependencies]

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from frame_uploader.config import DEFAULT_CONFIG_PATH, TVConfig
 from frame_uploader.thumbnails import fetch_thumbnail
+from frame_uploader.tv_tls import TVCertificateError
 from frame_uploader.uploader import (
     ArtModeRequiredError,
     check_art_mode,
@@ -47,6 +48,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--matte",
         default="modern_warm",
         help="Default matte style (default: modern_warm)",
+    )
+
+    trust_p = sub.add_parser(
+        "trust-tv", help="Verify and save an explicitly trusted TV certificate"
+    )
+    trust_p.add_argument(
+        "--fingerprint", required=True, help="Expected SHA-256 certificate fingerprint"
     )
 
     # --- configure-smartthings ---
@@ -192,6 +200,28 @@ def main() -> None:
     from samsungtvws.exceptions import ResponseError
 
     config = _get_config()
+    if args.command == "trust-tv":
+        from frame_uploader.tv_tls import (
+            normalize_fingerprint,
+            open_pinned_socket,
+        )
+
+        if config.port != 8002:
+            parser.error("TV certificate verification requires TLS port 8002")
+        try:
+            fingerprint = normalize_fingerprint(args.fingerprint)
+            with open_pinned_socket(config.host, config.port, fingerprint):
+                pass
+        except (ValueError, TVCertificateError, OSError) as error:
+            parser.error(str(error))
+        config.tls_fingerprint = fingerprint
+        config.save()
+        print("TV certificate verified and saved. Certificate verification is enabled.")
+        return
+
+    if args.command == "upload-async" and config.tls_fingerprint is not None:
+        parser.error("upload-async does not support certificate pinning; use upload instead")
+
     tv = connect(config)
 
     try:
@@ -262,6 +292,8 @@ def main() -> None:
                         return upload_image_chunked(
                             tv, file_path, matte=matte, max_retries=3
                         )
+                    except TVCertificateError:
+                        raise
                     except Exception as e:
                         if method == "chunked":
                             raise
@@ -398,7 +430,7 @@ def main() -> None:
                 )
                 sys.exit(1)
 
-    except ArtModeRequiredError as e:
+    except (ArtModeRequiredError, TVCertificateError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 

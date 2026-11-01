@@ -150,6 +150,14 @@ def fetch_thumbnail(art: Any, content_id: str) -> tuple[str | None, bytearray]:
     Note: `art` is typically `tv.art()` (samsungtvws.art.SamsungTVArt).
     """
 
+    # Modern clients handle inline thumbnails and D2D through their own transport
+    # factory. This also keeps pinned clients off the legacy unverified socket path.
+    if hasattr(art, "_open_d2d_socket"):
+        data = art.get_thumbnail(content_id)
+        if not isinstance(data, (bytes, bytearray)):
+            raise RuntimeError("TV did not return thumbnail data")
+        return None, bytearray(data)
+
     ensure_thumbnail_compat()
 
     # This mirrors samsungtvws.art.SamsungTVArt.get_thumbnail() request shape.
