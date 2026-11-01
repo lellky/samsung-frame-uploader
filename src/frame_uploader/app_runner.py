@@ -286,7 +286,6 @@ def upload_one(cfg: AppConfig, db: AppDB) -> str | None:
         if cfg.select_after_upload:
             try:
                 select_image(tv, content_id)
-                logger.info("Selected %s", content_id)
             except ArtModeRequiredError as e:
                 logger.info("Skipping select: %s", e)
 
@@ -378,7 +377,6 @@ def cleanup_tv(cfg: AppConfig, db: AppDB) -> int:
             try:
                 delete_image(tv, cid)
                 db.mark_upload_tv_deleted(tv_content_id=cid)
-                logger.info("Deleted %s", cid)
                 deleted += 1
             except Exception as e:  # noqa: BLE001
                 logger.warning("Failed to delete %s: %s", cid, e)
@@ -415,7 +413,6 @@ def cleanup_tv(cfg: AppConfig, db: AppDB) -> int:
         try:
             delete_image(tv, cid)
             db.mark_upload_tv_deleted(tv_content_id=cid)
-            logger.info("Deleted %s", cid)
             deleted += 1
         except Exception as e:  # noqa: BLE001
             logger.warning("Failed to delete %s: %s", cid, e)
