@@ -228,6 +228,20 @@ pending selection. `DRY_RUN` leaves pending selections and rotation progress alo
 With `SELECT_AFTER_UPLOAD=false`, a successful upload completes the rotation step
 without selecting artwork.
 
+### HEIC / HEIF input
+
+The scheduled app accepts JPEG, PNG, HEIC (`.heic`) and HEIF (`.heif`) files in
+`incoming`, including uppercase extensions. HEIC/HEIF images are decoded with
+`pillow-heif` and converted to the same 3840x2160 JPEG output as other images.
+Original files are left unchanged. Orientation and EXIF capture dates are read
+before optimization; capture dates can be used with `ORDER_MODE=exif_date`.
+For files containing multiple images, only the primary still image is used.
+
+Rebuild the Docker image after updating (`docker compose up -d --build`), or
+reinstall the package for a local installation (`pip install -e .`). HEIC/HEIF
+support is limited to the scheduled app; direct CLI uploads still accept JPEG
+and PNG.
+
 ### Startup and upload timing (important)
 
 `frame-uploader-app` runs a "tick" immediately on startup (there is no initial sleep).

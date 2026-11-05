@@ -40,7 +40,7 @@ from frame_uploader.uploader import (
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".heif"}
 
 
 @dataclass(frozen=True)
