@@ -196,8 +196,37 @@ This repo also includes a headless app (`frame-uploader-app`) that:
 - scans an input folder for images
 - optimizes them for The Frame (3840x2160 JPEG)
 - uploads *and selects* one image per interval (throttled by `UPLOAD_INTERVAL_SECONDS`)
-- when there are no new images, it cycles through the existing image history and re-uploads in order
+- cycles through existing images in order, alternating with new images when both are available
 - prunes images on the TV to enforce `KEEP_ON_TV` (see "TV cleanup behavior" below)
+
+### Rotation and selection retries
+
+`ORDER_MODE` controls image order; the default, `created_at`, uses when the app
+first discovered each source file. `random` is a stable shuffled order rather than
+an independent random choice on every tick.
+
+New images get an early display without resetting progress through the existing
+collection. When both groups are available, the app alternates one new image with
+one image from the existing round. For example, a new image F arriving after A and
+B can produce `A, B, F, C, D, ...` instead of restarting at A.
+
+Each existing round has a saved, finite list of remaining image IDs. Later arrivals
+join a subsequent round, so a continuous inflow cannot extend the current round
+forever. The remaining list and ordinary rotation position persist across restarts.
+
+Successful upload and successful selection are tracked separately. If selecting
+an uploaded image fails, the app saves a pending selection and retries that same
+TV content ID on the next reachable tick, before considering another image. It
+does not upload another copy or advance the rotation while that selection is
+pending. Retries bypass upload throttling, and after a successful retry the image
+gets a full `UPLOAD_INTERVAL_SECONDS` before the next upload.
+
+Cleanup preserves both the current artwork and artwork awaiting selection, which
+can temporarily exceed `KEEP_ON_TV`. If the pending artwork has disappeared from
+the TV, it is uploaded again; a removed or replaced source cancels its stale
+pending selection. `DRY_RUN` leaves pending selections and rotation progress alone.
+With `SELECT_AFTER_UPLOAD=false`, a successful upload completes the rotation step
+without selecting artwork.
 
 ### Startup and upload timing (important)
 
@@ -205,10 +234,10 @@ This repo also includes a headless app (`frame-uploader-app`) that:
 
 However, the first tick may still **not upload** right away due to throttling and/or optimization:
 
-- **Upload throttling across restarts**: `UPLOAD_INTERVAL_SECONDS` (default 300) is enforced based on the
-  most recent successful upload time recorded in the app's SQLite DB (the `uploads` table). If you restart
-  the app shortly after a previous upload, the first tick will log and skip uploading until enough time has
-  elapsed.
+- **Upload throttling across restarts**: `UPLOAD_INTERVAL_SECONDS` (default 300) is enforced from the
+  later of the most recent successful upload and completed selection, recorded in SQLite. If you restart
+  shortly after either operation, uploads wait until enough time has elapsed. Pending selection retries
+  can still run immediately.
 
   Note: the "Upload throttled by UPLOAD_INTERVAL_SECONDS" message is logged at **DEBUG** level, so you
   generally need `frame-uploader-app -v` (or `--once -v`) to see it.
