@@ -11,14 +11,16 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import logging
 import secrets
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from frame_uploader.app_config import AppConfig
-from frame_uploader.app_db import AppDB
+from frame_uploader.app_db import AppDB, PendingSelection, SelectionKind
 from frame_uploader.config import TVConfig
 from frame_uploader.optimizer import (
     OPTIMIZER_VERSION,
@@ -39,6 +41,14 @@ from frame_uploader.uploader import (
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+
+
+@dataclass(frozen=True)
+class NextImage:
+    image_id: int
+    optimized_path: str
+    kind: SelectionKind
+    cycle_remaining_ids: list[int] | None = None
 
 
 def _iter_input_files(cfg: AppConfig) -> list[Path]:
@@ -139,19 +149,20 @@ def _should_upload_now(cfg: AppConfig, db: AppDB) -> bool:
     if cfg.upload_interval_seconds <= 0:
         return True
 
-    last = db.get_last_uploaded_at()
-    if not last:
-        return True
-
-    try:
-        last_dt = datetime.fromisoformat(last)
-        if last_dt.tzinfo is None:
-            last_dt = last_dt.replace(tzinfo=timezone.utc)
-    except ValueError:
+    times = []
+    for raw in (db.get_last_uploaded_at(), db.get_state("rotation_completed_at")):
+        if not raw:
+            continue
+        try:
+            dt = datetime.fromisoformat(raw)
+            times.append(dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc))
+        except ValueError:
+            continue
+    if not times:
         return True
 
     now = datetime.now(timezone.utc)
-    elapsed = (now - last_dt).total_seconds()
+    elapsed = (now - max(times)).total_seconds()
     return elapsed >= float(cfg.upload_interval_seconds)
 
 
@@ -204,60 +215,111 @@ def _order_key(cfg: AppConfig, seed: str | None, r) -> tuple:
     return (r.created_at, r.id)
 
 
-def _next_cycle_image(cfg: AppConfig, db: AppDB) -> tuple[int, str] | None:
-    """Return (image_id, optimized_path) for the next image to (re)upload.
-
-    Priority:
-    1) any optimized image that has never been uploaded (ordered by ORDER_MODE)
-    2) otherwise, cycle through all optimized images in ORDER_MODE and loop
-
-    We persist our position in the DB state table.
-    """
+def _next_cycle_image(cfg: AppConfig, db: AppDB) -> NextImage | None:
+    """Alternate new images with the existing round without moving its cursor."""
 
     seed = _get_order_seed(cfg, db)
 
     never = db.list_never_uploaded_images()
-    if never:
-        never.sort(key=lambda r: _order_key(cfg, seed, r))
-        r0 = never[0]
-        assert r0.optimized_path
-        return r0.id, r0.optimized_path
+    never.sort(key=lambda r: _order_key(cfg, seed, r))
+
+    def next_new() -> NextImage | None:
+        if not never:
+            return None
+        row = never[0]
+        assert row.optimized_path
+        return NextImage(row.id, row.optimized_path, "new")
+
+    last_kind = db.get_state("rotation_last_kind")
+    if never and last_kind != "new":
+        return next_new()
 
     rows = db.list_cycle_images()
+    if never:
+        never_ids = {row.id for row in never}
+        rows = [row for row in rows if row.id not in never_ids]
     if not rows:
-        return None
+        return next_new()
 
-    rows.sort(key=lambda r: _order_key(cfg, seed, r))
+    by_id = {row.id: row for row in rows}
+    remaining_raw = db.get_state("cycle_remaining_ids")
+    remaining = json.loads(remaining_raw) if remaining_raw else []
+    # Removed/unavailable sources no longer consume slots in this round.
+    remaining = [image_id for image_id in remaining if image_id in by_id]
+    if not remaining:
+        # Snapshot one finite round. Images arriving later join a subsequent
+        # round instead of extending this one indefinitely.
+        rows.sort(key=lambda r: _order_key(cfg, seed, r))
+        start_idx = 0
+        last_raw = db.get_state("cycle_last_image_id")
+        if last_raw:
+            try:
+                last_id = int(last_raw)
+                for i, row in enumerate(rows):
+                    if row.id == last_id:
+                        start_idx = (i + 1) % len(rows)
+                        break
+            except ValueError:
+                pass
+        remaining = [row.id for row in rows[start_idx:] + rows[:start_idx]]
 
-    last_raw = db.get_state("cycle_last_image_id")
-    start_idx = 0
-    if last_raw:
+    last_image_id = db.get_state("rotation_last_image_id")
+    if last_kind == "new" and (never or len(remaining) > 1):
+        remaining = [image_id for image_id in remaining if str(image_id) != last_image_id]
+    if remaining:
+        row = by_id[remaining[0]]
+        assert row.optimized_path
+        return NextImage(row.id, row.optimized_path, "cycle", remaining[1:])
+
+    return next_new()
+
+
+def _complete_pending_selection(cfg: AppConfig, db: AppDB, tv, pending: PendingSelection) -> None:
+    if cfg.select_after_upload:
         try:
-            last_id = int(last_raw)
-            for i, r in enumerate(rows):
-                if r.id == last_id:
-                    start_idx = (i + 1) % len(rows)
-                    break
-        except ValueError:
-            start_idx = 0
-
-    r = rows[start_idx]
-    if not r.optimized_path:
-        return None
-
-    return r.id, r.optimized_path
+            select_image(tv, pending.tv_content_id)
+        except ArtModeRequiredError as error:
+            logger.info("Selection pending; will retry: %s", error)
+            return
+        except Exception as error:  # noqa: BLE001
+            logger.warning("Selection of %s failed; will retry: %s", pending.tv_content_id, error)
+            return
+    db.complete_selection(pending)
 
 
 def upload_one(cfg: AppConfig, db: AppDB) -> str | None:
-    if not _should_upload_now(cfg, db):
+    """Upload one image, or retry an unfinished selection without uploading again."""
+    pending = db.get_pending_selection()
+    nxt = None
+    selection_only = False
+    if pending:
+        row = db.get_image(pending.image_id)
+        if row is None or row.optimized_path is None or row.tv_content_id != pending.tv_content_id:
+            if cfg.dry_run:
+                logger.info("DRY_RUN: would discard stale pending selection")
+                return None
+            # The source was removed or replaced. Do not display the stale version.
+            db.set_state("pending_selection", None)
+            pending = None
+        else:
+            nxt = NextImage(row.id, row.optimized_path, pending.kind, pending.cycle_remaining_ids)
+            selection_only = row.tv_deleted_at is None
+
+    if not selection_only and not _should_upload_now(cfg, db):
         logger.debug("Upload throttled by UPLOAD_INTERVAL_SECONDS")
         return None
-
-    nxt = _next_cycle_image(cfg, db)
+    if nxt is None:
+        nxt = _next_cycle_image(cfg, db)
     if nxt is None:
         return None
 
-    image_id, optimized_path = nxt
+    image_id, optimized_path = nxt.image_id, nxt.optimized_path
+    if cfg.dry_run:
+        if selection_only:
+            logger.info("DRY_RUN: would retry pending selection")
+        else:
+            logger.info("DRY_RUN: would upload %s", optimized_path)
+        return None
 
     tv_cfg = TVConfig.load()
     if not is_tv_reachable(tv_cfg):
@@ -266,31 +328,18 @@ def upload_one(cfg: AppConfig, db: AppDB) -> str | None:
 
     tv = connect(tv_cfg)
 
+    if selection_only:
+        assert pending is not None
+        _complete_pending_selection(cfg, db, tv, pending)
+        return None
+
     matte = cfg.matte or tv_cfg.matte
 
     try:
-        if cfg.dry_run:
-            logger.info("DRY_RUN: would upload %s", optimized_path)
-            return None
-
-        try:
-            content_id = upload_image(tv, Path(optimized_path), matte=matte)
-        except ArtModeRequiredError as e:
-            logger.info("Skipping upload: %s", e)
-            return None
-
-        db.mark_uploaded(image_id=image_id, tv_content_id=content_id)
-        db.set_state("cycle_last_image_id", str(image_id))
-        logger.info("Uploaded %s -> %s", optimized_path, content_id)
-
-        if cfg.select_after_upload:
-            try:
-                select_image(tv, content_id)
-            except ArtModeRequiredError as e:
-                logger.info("Skipping select: %s", e)
-
-        return content_id
-
+        content_id = upload_image(tv, Path(optimized_path), matte=matte)
+    except ArtModeRequiredError as e:
+        logger.info("Skipping upload: %s", e)
+        return None
     except OSError as e:
         logger.info("Skipping upload: TV not reachable (%s:%s): %s", tv_cfg.host, tv_cfg.port, e)
         return None
@@ -298,6 +347,17 @@ def upload_one(cfg: AppConfig, db: AppDB) -> str | None:
         logger.exception("Upload failed for %s", optimized_path)
         db.mark_upload_failed(image_id=image_id, error=str(e))
         return None
+
+    db.mark_uploaded(
+        image_id=image_id,
+        tv_content_id=content_id,
+        selection_kind=nxt.kind,
+        cycle_remaining_ids=nxt.cycle_remaining_ids,
+    )
+    logger.info("Uploaded %s -> %s", optimized_path, content_id)
+    pending = PendingSelection(image_id, content_id, nxt.kind, nxt.cycle_remaining_ids)
+    _complete_pending_selection(cfg, db, tv, pending)
+    return content_id
 
 
 def cleanup_tv(cfg: AppConfig, db: AppDB) -> int:
@@ -340,6 +400,15 @@ def cleanup_tv(cfg: AppConfig, db: AppDB) -> int:
     except Exception:  # noqa: BLE001
         current_id = None
 
+    pending = db.get_pending_selection()
+    pending_id = pending.tv_content_id if pending else None
+    protected_ids = {cid for cid in (current_id, pending_id) if cid}
+    if pending_id and pending_id != current_id:
+        tv_ids = {item["content_id"] for item in tv_items}
+        if pending_id not in tv_ids and not cfg.dry_run:
+            # A pending upload deleted outside the app must be uploaded again.
+            db.mark_upload_tv_deleted(tv_content_id=pending_id)
+
     deleted = 0
 
     if cfg.cleanup_mode == "all_my":
@@ -365,8 +434,8 @@ def cleanup_tv(cfg: AppConfig, db: AppDB) -> int:
         to_delete = max(0, len(candidates_sorted) - cfg.keep_on_tv)
         for item in candidates_sorted[:to_delete]:
             cid = item["content_id"]
-            if current_id and cid == current_id:
-                logger.info("Skipping delete of currently displayed art: %s", cid)
+            if cid in protected_ids:
+                logger.info("Skipping delete of displayed or pending art: %s", cid)
                 continue
 
             if cfg.dry_run:
@@ -401,8 +470,8 @@ def cleanup_tv(cfg: AppConfig, db: AppDB) -> int:
 
     for u in uploads[:to_delete]:
         cid = u.tv_content_id
-        if current_id and cid == current_id:
-            logger.info("Skipping delete of currently displayed art: %s", cid)
+        if cid in protected_ids:
+            logger.info("Skipping delete of displayed or pending art: %s", cid)
             continue
 
         if cfg.dry_run:

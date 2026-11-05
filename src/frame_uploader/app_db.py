@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Literal
 
 
 def _utc_now_iso() -> str:
@@ -41,6 +42,17 @@ class UploadRow:
     tv_content_id: str
     uploaded_at: str
     tv_deleted_at: str | None
+
+
+SelectionKind = Literal["new", "cycle"]
+
+
+@dataclass(frozen=True)
+class PendingSelection:
+    image_id: int
+    tv_content_id: str
+    kind: SelectionKind
+    cycle_remaining_ids: list[int] | None = None
 
 
 class AppDB:
@@ -353,11 +365,20 @@ class AppDB:
             return None
         return row["last_uploaded_at"]
 
-    def mark_uploaded(self, *, image_id: int, tv_content_id: str) -> None:
+    def mark_uploaded(
+        self,
+        *,
+        image_id: int,
+        tv_content_id: str,
+        selection_kind: SelectionKind | None = None,
+        cycle_remaining_ids: list[int] | None = None,
+    ) -> None:
         """Record a successful upload.
 
         We store upload history in the uploads table (so we can cycle/re-upload) and
         also update the images table with the latest upload for convenience.
+        When provided, selection_kind atomically records the unfinished selection
+        so a restart cannot turn an uploaded image into a skipped display.
         """
 
         now = _utc_now_iso()
@@ -376,11 +397,48 @@ class AppDB:
                 SET status = 'uploaded',
                     uploaded_at = ?,
                     tv_content_id = ?,
+                    tv_deleted_at = NULL,
                     last_error = NULL
                 WHERE id = ?
                 """,
                 (now, tv_content_id, image_id),
             )
+            if selection_kind is not None:
+                pending = PendingSelection(
+                    image_id, tv_content_id, selection_kind, cycle_remaining_ids
+                )
+                self._write_state(conn, "pending_selection", json.dumps(asdict(pending)), now)
+
+    def get_pending_selection(self) -> PendingSelection | None:
+        raw = self.get_state("pending_selection")
+        if raw is None:
+            return None
+        pending = PendingSelection(**json.loads(raw))
+        if pending.kind not in ("new", "cycle"):
+            raise ValueError("Invalid pending selection kind")
+        return pending
+
+    def complete_selection(self, pending: PendingSelection) -> None:
+        """Commit rotation progress after selection (or an upload-only completion)."""
+        now = _utc_now_iso()
+        with self._connect() as conn:
+            row = conn.execute("SELECT value FROM state WHERE key = 'pending_selection'").fetchone()
+            if row is None or json.loads(row["value"]) != asdict(pending):
+                raise ValueError("Pending selection changed before completion")
+            if pending.kind == "cycle":
+                self._write_state(conn, "cycle_last_image_id", str(pending.image_id), now)
+                self._write_state(
+                    conn, "cycle_remaining_ids", json.dumps(pending.cycle_remaining_ids or []), now
+                )
+            self._write_state(conn, "rotation_last_kind", pending.kind, now)
+            self._write_state(conn, "rotation_last_image_id", str(pending.image_id), now)
+            self._write_state(conn, "rotation_completed_at", now, now)
+            self._write_state(conn, "pending_selection", None, now)
+
+    def get_image(self, image_id: int) -> ImageRow | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM images WHERE id = ?", (image_id,)).fetchone()
+        return ImageRow(**dict(row)) if row is not None else None
 
     def mark_upload_failed(self, *, image_id: int, error: str) -> None:
         with self._connect() as conn:
@@ -490,17 +548,20 @@ class AppDB:
     def set_state(self, key: str, value: str | None) -> None:
         now = _utc_now_iso()
         with self._connect() as conn:
-            if value is None:
-                conn.execute("DELETE FROM state WHERE key = ?", (key,))
-                return
+            self._write_state(conn, key, value, now)
 
-            conn.execute(
-                """
-                INSERT INTO state(key, value, updated_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(key) DO UPDATE SET
-                    value = excluded.value,
-                    updated_at = excluded.updated_at
-                """,
-                (key, value, now),
-            )
+    @staticmethod
+    def _write_state(conn: sqlite3.Connection, key: str, value: str | None, now: str) -> None:
+        if value is None:
+            conn.execute("DELETE FROM state WHERE key = ?", (key,))
+            return
+        conn.execute(
+            """
+            INSERT INTO state(key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            """,
+            (key, value, now),
+        )
