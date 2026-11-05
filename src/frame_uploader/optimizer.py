@@ -10,6 +10,10 @@ from datetime import datetime
 from pathlib import Path
 
 from PIL import Image, ImageOps
+from pillow_heif import register_heif_opener
+
+# Register before both metadata scans and optimization open source images.
+register_heif_opener(thumbnails=False)
 
 TARGET_W = 3840
 TARGET_H = 2160
@@ -64,9 +68,15 @@ def _extract_exif_datetime(im: Image.Image) -> str | None:
     except Exception:  # noqa: BLE001
         return None
 
+    # Cameras commonly store original/digitized dates in the nested Exif IFD.
+    try:
+        camera_exif = exif.get_ifd(0x8769)
+    except Exception:  # noqa: BLE001
+        camera_exif = {}
+
     # Prefer DateTimeOriginal (36867), then DateTimeDigitized (36868), then DateTime (306)
     for tag in (36867, 36868, 306):
-        raw = exif.get(tag)
+        raw = camera_exif.get(tag) or exif.get(tag)
         if not isinstance(raw, str) or not raw.strip():
             continue
         s = raw.strip()
